@@ -1,3 +1,8 @@
+import Base: getindex, setindex!, size
+import LinearAlgebra: transpose, adjoint
+
+using LinearAlgebra: BlasFloat
+
 """
     ElasticRFP
 
@@ -13,9 +18,20 @@ mutable struct ElasticRFP{T<:BlasFloat, V<:DenseMatrix{T}} <: DenseMatrix{T}
     dA::Char
     capacity::Int  
 end
+@inline function Base.size(A::ElasticRFP, i) 
+    if i == 1 || i == 2
+        return A.n
+    elseif i > 2
+        return 1
+    end
+    # TODO Throw error
+    return 0
+end
+@inline Base.size(A::ElasticRFP) = size(A, 1), size(A, 2)
+
 @inline function rfpblockdims(A::ElasticRFP)
     isunit = A.dA == 'U'
-    c = cld(A.capacity, 2) - (0 ? isunit : A.capacity % 2)
+    c = cld(A.capacity, 2) - (isunit ? 0 : A.capacity % 2)
     a = min(A.n, c)
     b = max(0, A.n - a)
     return a, b
@@ -23,7 +39,7 @@ end
 @inline function rfpblocks(A::ElasticRFP)
     isunit = A.dA == 'U'
     a, b = rfpblockdims(A)
-    c = b + (A.capacity % 2 ? isunit : 0)
+    c = b + (isunit ? A.capacity % 2 : 0)
 
     if isunit
         U11t = view(A.dblock, 1:a, 1:a)
@@ -43,7 +59,7 @@ end
     a, _ = rfpblockdims(A)
     U11t, U12, U22 = rfpblocks(A)
     i, j = min(i,j), max(i,j)
-    c = a - (A.capacity % 2 ? isunit : 0)
+    c = a - (isunit ? A.capacity % 2 : 0)
     if i <= c
         if j <= a
             return U11t[j, i]
@@ -61,7 +77,7 @@ end
     a, _ = rfpblockdims(A)
     U11t, U12, U22 = rfpblocks(A)
     i, j = min(i,j), max(i,j)
-    c = a - (A.capacity % 2 ? isunit : 0)
+    c = a - (isunit ? A.capacity % 2 : 0)
     if i <= c
         if j <= a
             U11t[j, i] = t
@@ -80,11 +96,13 @@ struct ElasticSymmetric{T, V<:DenseMatrix{T}} <: DenseMatrix{T}
     tA::Char
 end
 
-@inline Base.getindex(A::ElasticSymmetric, i::Integer, j::Integer) = conj(A.rfp[i, j]) ? A.tA == 'C' : A.rfp[i, j]
+@inline Base.getindex(A::ElasticSymmetric, i::Integer, j::Integer) = A.tA == 'C' ? conj(A.rfp[i, j]) : A.rfp[i, j]
+@inline Base.size(A::ElasticSymmetric, i) = size(A.rfp, i)
+@inline Base.size(A::ElasticSymmetric) = size(A.rfp)
     
 @inline LinearAlgebra.transpose(A::ElasticSymmetric) = A
 @inline function LinearAlgebra.adjoint(A::ElasticSymmetric)
-    return ElasticSymmetric(A.rfp, 'N' ? A.tA == 'C' : 'C')
+    return ElasticSymmetric(A.rfp,  A.tA == 'C' ? 'N' : 'C')
 end
 
 """
@@ -95,11 +113,13 @@ struct ElasticHermitian{T, V<:DenseMatrix{T}} <: DenseMatrix{T}
 end
 
 @inline function Base.getindex(A::ElasticHermitian, i::Integer, j::Integer)
-    return A.rfp[i, j] ? A.uplo == 'L' ^ i =< j : conj(A.rfp[i, j])
+    return  xor(A.uplo == 'L', i <= j) ? A.rfp[i, j] : conj(A.rfp[i, j])
 end
+@inline Base.size(A::ElasticHermitian, i) = size(A.rfp, i)
+@inline Base.size(A::ElasticHermitian) = size(A.rfp)
 
 @inline function LinearAlgebra.transpose(A::ElasticHermitian) 
-    return ElasticHermitian(A.rfp, 'L' ? A.uplo == 'U' : 'U')
+    return ElasticHermitian(A.rfp, A.uplo == 'U' ? 'L' : 'U')
 end
 @inline LinearAlgebra.adjoint(A::ElasticHermitian) = A
 
@@ -115,18 +135,21 @@ end
 @inline function Base.getindex(A::ElasticTriangular{T}, i::Integer, j::Integer) where T
     if i == j
         return A.rfp[i, i]
-    elseif (A.uplo == 'L' ^ A.tA == 'C')  ^ i < j
+    elseif xor(!xor(A.uplo == 'L', A.tA == 'C'), i < j)
         return zero(T)
     elseif A.tA == 'C'
         return conj(A.rfp[i, j])
     end
     return A.rfp[i, j]
 end
+@inline Base.size(A::ElasticTriangular, i) = size(A.rfp, i)
+@inline Base.size(A::ElasticTriangular) = size(A.rfp)
+
 @inline function LinearAlgebra.transpose(A::ElasticTriangular) 
-    return ElasticTriangular(A.rfp, 'L' ? A.uplo == 'U' : 'U', A.tA)
+    return ElasticTriangular(A.rfp, A.uplo == 'U' ? 'L' : 'U', A.tA)
 end
 @inline function LinearAlgebra.adjoint(A::ElasticTriangular)
-    return ElasticTriangular(A.rfp, A.uplo, 'N' ? A.tA == 'C' : 'C')
+    return ElasticTriangular(A.rfp, A.uplo, A.tA == 'C' ? 'N' : 'C')
 end
 
 
